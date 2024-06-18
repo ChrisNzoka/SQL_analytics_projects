@@ -3,23 +3,19 @@
 #1 create a new database(schema)
 CREATE SCHEMA `world_layoffs`;
 
-#2 Import data from the table tab by right clicking and selecting 'Table data import wizard'
-
-#3 view the table
 SELECT 
     *
 FROM
     layoffs;
 
-#4 create a staging area for the data(a duplicate)
--- first we create the table that looks exactly like what we have using "LIKE"
+-- Then we create the table
 CREATE TABLE layoffs_staging LIKE layoffs;
 
--- then we insert the contents of layoffs into the layoff_staging
+-- next, we insert the contents of layoffs into the layoff_staging
 INSERT layoffs_staging
 SELECT * FROM layoffs;
 
-#5 Check for and remove duplicates
+#2 Check for and remove duplicates
 -- First we'll use the windows funtions row_number() and over() to give row numbers to the records
 -- then, using CTEs and/or Subqueries, we can single out the duplicates over all the fields and remove them.
 
@@ -88,16 +84,16 @@ FROM
 -- Above, we just saw how to alter an existing table and insert a new field to it using ADD
 -- For the case study, let's create a new staging table and add the field `row_num INT`
 CREATE TABLE layoffs_staging2 (
-`company` text,
-`location`text,
-`industry`text,
-`total_laid_off` INT,
-`percentage_laid_off` text,
-`date` text,
-`stage`text,
-`country` text,
-`funds_raised_millions` int,
-`row_num` INT
+    `company` TEXT,
+    `location` TEXT,
+    `industry` TEXT,
+    `total_laid_off` INT,
+    `percentage_laid_off` TEXT,
+    `date` TEXT,
+    `stage` TEXT,
+    `country` TEXT,
+    `funds_raised_millions` INT,
+    `row_num` INT
 );
 
 # Now, let's insert our selection
@@ -108,18 +104,207 @@ SELECT *,
 			) AS row_num
 	FROM 
 		layoffs_staging;
+        
 -- let's check the input
-select * from layoffs_staging2
-WHERE row_num >= 2;
+SELECT 
+    *
+FROM
+    layoffs_staging2
+WHERE
+    row_num >= 2;
 
--- now that we have this we can delete rows were row_num is greater than 2
-DELETE FROM layoffs_staging2
-WHERE row_num > 1;
+-- now that we have this we can delete rows where row_num is greater than 2
+DELETE FROM layoffs_staging2 
+WHERE
+    row_num > 1;
+-- Notably, to alter or modify the content of a table, we have to unselect the protection feature
+-- On the menu bar, Edit --> Preferences --> SQL Editor (scroll down and unselect 'safe Updates')
 
-#6 Standardize the Data (spellings, typos, etc)
+-- --------------------------------------------------
+#3 Standardizing the data
+# To standardize data, we need to scan through each field for possible issues
+-- trim white spaces in each field using the TRIM string function as below
+-- 1st, we select and and compare to see if there's need
+SELECT 
+    company, TRIM(company)
+FROM
+    layoffs_staging2;
+
+-- Now, we update the database with the trim
+UPDATE layoffs_staging2 
+SET 
+    company = TRIM(company);
+    
+-- Next, let's check the `industry` field to ensure all industries and properly categorized
+
+SELECT 
+    industry, COUNT(industry)
+FROM
+    layoffs_staging2
+GROUP BY industry
+ORDER BY industry;
+
+-- The output shows that we need to standardize some crypto industries
+-- To do so, let's isolate the records we want to work on
+
+SELECT 
+    *
+FROM
+    layoffs_staging2
+WHERE
+    industry LIKE 'Crypto%';
+
+-- To standardize, let's update
+UPDATE layoffs_staging2 
+SET 
+    industry = 'Crypto'
+WHERE
+    industry LIKE 'Crypto%';
+
+#OR
+
+UPDATE layoffs_staging2 
+SET 
+    industry = 'Crypto'
+WHERE
+    industry IN ('Crypto Currency', 'CryptoCurrency');
+-- now that's fixed
+
+-- Next, scanning through the countries showed a record with a trailing dot (.)
+SELECT DISTINCT
+    country, country
+FROM
+    layoffs_staging2
+ORDER BY 1; 
+
+-- To fix this, we'll check to see how TRIM fixes it
+SELECT DISTINCT
+    country, TRIM(TRAILING '.' FROM country)
+FROM
+    layoffs_staging2
+ORDER BY 1; 
+
+-- Now, let's apply
+UPDATE layoffs_staging2 
+SET 
+    country = 'United States'
+WHERE
+    country LIKE 'United States%';
+
+-- OR
+
+UPDATE layoffs_staging2 
+SET 
+    country = TRIM(TRAILING '.' FROM country);
+-- either way, we have successfully removed the trailing dot
+
+-- Let's also fix the date columns:
+SELECT *
+FROM world_layoffs.layoffs_staging2;
+
+-- the date field is a text data type
+-- we can use STR_TO_DATE (string to date) to update this field
+
+-- let's see what it'll look like
+SELECT 
+    date, STR_TO_DATE(`date`, '%m/%d/%Y')
+FROM
+    layoffs_staging2;
+
+-- Now, let's update it
+UPDATE layoffs_staging2
+SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y');
+-- Notably, STR_TO_DATE(`date`, '%m/%d/%Y') is the standard for converting strings to date
+
+-- now we can convert the data type properly
+ALTER TABLE layoffs_staging2
+MODIFY COLUMN `date` DATE;
 
 
-#7 Check for Null values and Blank cells (checking to see if we should populate it or leave it be)
+SELECT *
+FROM world_layoffs.layoffs_staging2;
 
+-- ----------------------------------------------------
+-- #4 Null and empty records
+-- 1st, let's try to populate empty cells that we can actually populate
+-- On the Industry field, we should set the blanks to nulls since those are typically easier to work with
+UPDATE world_layoffs.layoffs_staging2
+SET industry = NULL
+WHERE industry = '';
 
-#7 Remove irrelevant fields(columns) and records(rows)
+-- if we check those empty cells (industry field) are all null
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE industry IS NULL 
+OR industry = ''
+ORDER BY industry;
+
+-- Now, let's try to update the null cell in the industry field
+-- To do this, we'll check for each company and find what industry the other records in the data are classified as
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE company LIKE 'airbnb%';
+-- it looks like airbnb is a travel, but one just isn't populated.
+-- Now, we'll write a query that if there is another row with the same company name, it will update it to the non-null industry values
+-- makes it easy so if there were thousands we wouldn't have to manually check them all
+
+SELECT 
+    *
+FROM
+    layoffs_staging2 t1
+        JOIN
+    layoffs_staging2 t2 ON t1.company = t2.company
+WHERE
+    (t1.industry IS NULL or t1.industry = '')
+        AND t2.industry IS NOT NULL;
+     
+-- Now, let's try to update and see if it works
+UPDATE layoffs_staging2 t1
+        JOIN
+    layoffs_staging2 t2 ON t1.company = t2.company 
+SET 
+    t1.industry = t2.industry
+WHERE
+    (t1.industry IS NULL OR t1.industry = '')
+        AND t2.industry IS NOT NULL;
+        
+-- Let's check if it worked
+SELECT 
+    *
+FROM
+    world_layoffs.layoffs_staging2
+WHERE
+    company IN ('Airbnb' , 'juul', 'Carvana')
+ORDER BY industry;
+-- it worked😋😋
+
+#4 Remove irrelevant fields(columns) and records(rows)
+-- We need each record to have either total_laid_off or percentage_laid_off
+-- Thus, we'll remove any record that doesn't have them
+SELECT 
+    *
+FROM
+    world_layoffs.layoffs_staging2
+WHERE
+    total_laid_off IS NULL and percentage_laid_off is null;
+    
+-- Now, let's delete useless data we can't really use
+DELETE FROM world_layoffs.layoffs_staging2 
+WHERE
+    total_laid_off IS NULL
+    AND percentage_laid_off IS NULL;
+    
+-- Next, we need to remove the last field (row_num)
+-- it has served it's purpose in helping us  get rid of duplicates
+ALTER TABLE world_layoffs.layoffs_staging2
+DROP COLUMN row_num;
+
+-- Let's see our final result
+SELECT 
+    *
+FROM
+    layoffs_staging2;
+
+/* ---------------------------------------
+The final cleaned file is saved as layoffs_staging2.csv
+--------------------------------------- */
